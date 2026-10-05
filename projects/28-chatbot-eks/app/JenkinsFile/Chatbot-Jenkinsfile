@@ -1,0 +1,87 @@
+// Pipeline Chatbot UI (projet 28) — corrections : URL de TON dépôt, nom d'image en minuscules et tagué,
+// "|| true" (et non "| true", qui est un pipe), clé NVD, rôle IAM au lieu de clés AWS, kubectl set image.
+// Credentials : Sonar-token, docker, nvd-api-key. Tools : jdk17, node20, sonar-scanner, DP-Check, docker.
+// Prérequis EKS : sudo -u jenkins aws eks update-kubeconfig --name chatbot-eks --region eu-west-3
+pipeline {
+    agent any
+    tools {
+        jdk 'jdk17'
+        nodejs 'node20'
+    }
+    environment {
+        SCANNER_HOME = tool 'sonar-scanner'
+        IMAGE        = 'ton-pseudo-dockerhub/chatbot'
+    }
+    options {
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+    stages {
+        stage('Clean workspace') { steps { cleanWs() } }
+        stage('Checkout') {
+            steps { git branch: 'main', url: 'https://github.com/TON-PSEUDO/chatbot-ui.git' }
+        }
+        stage('Dépendances') { steps { sh 'npm ci --no-audit --no-fund' } }
+        stage('Tests unitaires') { steps { sh 'npx vitest run' } }
+        stage('Analyse SonarQube') {
+            steps {
+                withSonarQubeEnv('sonar-server') {
+                    sh '$SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=Chatbot -Dsonar.projectKey=Chatbot -Dsonar.exclusions=node_modules/**,.next/**'
+                }
+            }
+        }
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: false, credentialsId: 'Sonar-token'
+                }
+            }
+        }
+        stage('OWASP Dependency-Check') {
+            steps {
+                withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_KEY')]) {
+                    dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit --nvdApiKey ' + env.NVD_KEY,
+                                    odcInstallation: 'DP-Check'
+                }
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+        stage('Trivy FS') { steps { sh 'trivy fs --skip-dirs node_modules . > trivyfs.txt' } }
+        stage('Build & push Docker') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {
+                        sh '''
+                          docker build -t "$IMAGE:$BUILD_NUMBER" -t "$IMAGE:latest" .
+                          docker push "$IMAGE:$BUILD_NUMBER"
+                          docker push "$IMAGE:latest"
+                        '''
+                    }
+                }
+            }
+        }
+        stage('Trivy image') { steps { sh 'trivy image "$IMAGE:$BUILD_NUMBER" > trivyimage.txt' } }
+        stage('Déployer en conteneur') {
+            steps {
+                // la clé OpenAI n'est pas passée ici : chaque utilisateur la saisit dans l'interface
+                sh '''
+                  docker rm -f chatbot || true
+                  docker run -d --name chatbot --restart unless-stopped -p 3000:3000 "$IMAGE:$BUILD_NUMBER"
+                '''
+            }
+        }
+        stage('Déployer sur EKS') {
+            steps {
+                sh '''
+                  kubectl apply -f k8s/chatbot-ui.yaml
+                  kubectl set image deployment/chatbot chatbot="$IMAGE:$BUILD_NUMBER"
+                  kubectl rollout status deployment/chatbot --timeout=180s
+                  kubectl get svc chatbot-service
+                '''
+            }
+        }
+    }
+    post {
+        always { archiveArtifacts artifacts: 'trivy*.txt', allowEmptyArchive: true }
+    }
+}
