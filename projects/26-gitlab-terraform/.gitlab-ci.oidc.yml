@@ -1,0 +1,79 @@
+# Variante SANS clé d'accès : GitLab fournit un jeton OIDC, AWS l'échange contre un rôle temporaire.
+# Pour l'utiliser : renomme ce fichier en .gitlab-ci.yml, crée le rôle avec aws/setup-oidc-gitlab.sh,
+# puis supprime les variables MY_AWS_KEY / MY_AWS_ACCESS_KEY et désactive les clés de l'utilisateur IAM.
+image:
+  name: hashicorp/terraform:1.16
+  entrypoint: [""]
+
+default:
+  id_tokens:
+    GITLAB_OIDC_TOKEN:
+      aud: https://gitlab.com
+
+variables:
+  TF_IN_AUTOMATION: "true"
+  AWS_DEFAULT_REGION: "eu-west-3"
+  AWS_ROLE_ARN: arn:aws:iam::123456789012:role/gitlab-terraform # ← ton compte
+  AWS_ROLE_SESSION_NAME: gitlab-$CI_PIPELINE_ID
+  AWS_WEB_IDENTITY_TOKEN_FILE: /tmp/web_identity_token
+
+cache:
+  key: terraform-$CI_COMMIT_REF_SLUG
+  paths:
+    - .terraform/providers
+
+before_script:
+  # le SDK AWS utilisé par Terraform lit ce fichier et endosse AWS_ROLE_ARN
+  - echo "$GITLAB_OIDC_TOKEN" > "$AWS_WEB_IDENTITY_TOKEN_FILE"
+  - terraform init -input=false -backend-config=tfstate.config
+
+stages:
+  - validate
+  - plan
+  - apply
+  - destroy
+
+validate:
+  stage: validate
+  script:
+    - terraform fmt -check -recursive
+    - terraform validate
+
+plan:
+  stage: plan
+  script:
+    - terraform plan -input=false -out=planfile
+  artifacts:
+    paths:
+      - planfile
+    expire_in: 1 day
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH # le rôle n'accepte que la branche main
+
+apply:
+  stage: apply
+  script:
+    - terraform apply -input=false planfile
+  needs:
+    - job: plan
+      artifacts: true
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+  environment:
+    name: staging
+    on_stop: destroy
+  resource_group: staging
+
+destroy:
+  stage: destroy
+  script:
+    - terraform destroy -input=false -auto-approve
+  needs: []
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+  environment:
+    name: staging
+    action: stop
+  resource_group: staging

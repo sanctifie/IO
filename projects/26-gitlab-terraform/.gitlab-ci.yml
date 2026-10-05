@@ -1,0 +1,70 @@
+# Pipeline Terraform GitLab : validate → plan → apply (manuel) → destroy (manuel)
+# Variables CI/CD à créer (Settings → CI/CD → Variables, Masked + Protected) : MY_AWS_KEY, MY_AWS_ACCESS_KEY
+# Variante sans clé d'accès : voir .gitlab-ci.oidc.yml
+image:
+  name: hashicorp/terraform:1.16 # image officielle, version épinglée
+  entrypoint: [""] # l'entrypoint de l'image est "terraform" : on le neutralise pour exécuter nos scripts
+
+variables:
+  TF_IN_AUTOMATION: "true"
+  AWS_ACCESS_KEY_ID: ${MY_AWS_KEY}
+  AWS_SECRET_ACCESS_KEY: ${MY_AWS_ACCESS_KEY}
+  AWS_DEFAULT_REGION: "eu-west-3"
+
+cache:
+  key: terraform-$CI_COMMIT_REF_SLUG
+  paths:
+    - .terraform/providers # providers téléchargés, réutilisés entre jobs
+
+before_script:
+  - terraform --version
+  - terraform init -input=false -backend-config=tfstate.config
+
+stages:
+  - validate
+  - plan
+  - apply
+  - destroy
+
+validate:
+  stage: validate
+  script:
+    - terraform fmt -check -recursive
+    - terraform validate
+
+plan:
+  stage: plan
+  script:
+    - terraform plan -input=false -out=planfile
+  artifacts:
+    paths:
+      - planfile
+    expire_in: 1 day
+
+apply:
+  stage: apply
+  script:
+    - terraform apply -input=false planfile
+  needs:
+    - job: plan
+      artifacts: true # récupère le planfile relu
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual # bouton ▶ : validation humaine
+  environment:
+    name: staging
+    on_stop: destroy
+  resource_group: staging # un seul apply/destroy à la fois sur cet environnement
+
+destroy:
+  stage: destroy
+  script:
+    - terraform destroy -input=false -auto-approve
+  needs: []
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+  environment:
+    name: staging
+    action: stop
+  resource_group: staging
