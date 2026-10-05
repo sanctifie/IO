@@ -1,0 +1,108 @@
+// Pipeline Blogging app (projet 30) : Maven → Trivy → Sonar (bloquant) → Nexus → image privée → EKS (RBAC).
+// Corrections : bloc "post" DANS le pipeline (il était après l'accolade finale : erreur de syntaxe),
+// image taguée par build (et non :latest), identifiants Kubernetes limités au namespace webapps.
+// Credentials : git-cred, sonar-token, dockerhub-cred, nexus-cred (via le fichier géré maven-settings), k8-cred.
+pipeline {
+    agent any
+    tools {
+        jdk 'jdk17'
+        maven 'maven3'
+    }
+    environment {
+        SCANNER_HOME = tool 'sonar-scanner'
+        IMAGE        = 'ton-pseudo-dockerhub/blogging-app'
+        K8S_API      = 'https://XXXXXXXX.gr7.eu-west-3.eks.amazonaws.com'   // kubectl config view --minify
+        K8S_CLUSTER  = 'blogging-eks'
+    }
+    options {
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+    stages {
+        stage('Checkout') {
+            steps { git branch: 'main', credentialsId: 'git-cred', url: 'https://github.com/TON-PSEUDO/blogging-app.git' }
+        }
+        stage('Compilation') { steps { sh 'mvn -B compile' } }
+        stage('Tests')       { steps { sh 'mvn -B test' } }
+        stage('Trivy FS')    { steps { sh 'trivy fs --format table -o fs.html .' } }
+        stage('Analyse SonarQube') {
+            steps {
+                withSonarQubeEnv('sonar-server') {
+                    sh '$SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=Blogging-app -Dsonar.projectKey=Blogging-app -Dsonar.java.binaries=target/classes'
+                }
+            }
+        }
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true, credentialsId: 'sonar-token'
+                }
+            }
+        }
+        stage('Build') { steps { sh 'mvn -B package -DskipTests' } }
+        stage('Publication Nexus') {
+            steps {
+                withMaven(globalMavenSettingsConfig: 'maven-settings', jdk: 'jdk17', maven: 'maven3', traceability: true) {
+                    sh 'mvn -B deploy -DskipTests'
+                }
+            }
+        }
+        stage('Build image') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'dockerhub-cred', url: 'https://index.docker.io/v1/') {
+                        sh 'docker build -t "$IMAGE:$BUILD_NUMBER" .'
+                    }
+                }
+            }
+        }
+        stage('Trivy image') { steps { sh 'trivy image --format table -o image.html "$IMAGE:$BUILD_NUMBER"' } }
+        stage('Push image') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'dockerhub-cred', url: 'https://index.docker.io/v1/') {
+                        sh 'docker push "$IMAGE:$BUILD_NUMBER"'
+                    }
+                }
+            }
+        }
+        stage('Déploiement EKS') {
+            steps {
+                withKubeConfig(credentialsId: 'k8-cred', serverUrl: env.K8S_API, namespace: 'webapps',
+                               clusterName: env.K8S_CLUSTER, caCertificate: '', restrictKubeConfigAccess: false) {
+                    sh '''
+                      sed -i "s#IMAGE_TAG#${BUILD_NUMBER}#" deployment-service.yml
+                      kubectl apply -f deployment-service.yml
+                      kubectl rollout status deployment/bloggingapp-deployment -n webapps --timeout=180s
+                    '''
+                }
+            }
+        }
+        stage('Vérification') {
+            steps {
+                withKubeConfig(credentialsId: 'k8-cred', serverUrl: env.K8S_API, namespace: 'webapps',
+                               clusterName: env.K8S_CLUSTER, caCertificate: '', restrictKubeConfigAccess: false) {
+                    sh 'kubectl get pods,svc -n webapps'
+                }
+            }
+        }
+    }
+    post {
+        always {
+            script {
+                def status = currentBuild.currentResult
+                def color  = status == 'SUCCESS' ? 'green' : 'red'
+                emailext(
+                    subject: "${env.JOB_NAME} - Build ${env.BUILD_NUMBER} - ${status}",
+                    body: """<div style="border: 2px solid ${color}; padding: 10px;">
+                               <h3 style="color: ${color};">Pipeline : ${status}</h3>
+                               <p>Job : ${env.JOB_NAME}</p><p>Build : ${env.BUILD_NUMBER}</p>
+                               <p><a href="${env.BUILD_URL}">Ouvrir le build</a></p></div>""",
+                    to: 'ton.compte@gmail.com',
+                    mimeType: 'text/html',
+                    attachmentsPattern: 'fs.html,image.html'
+                )
+            }
+        }
+    }
+}

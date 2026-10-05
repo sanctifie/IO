@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Contenu du fichier géré Jenkins "maven-settings" (Manage Jenkins → Managed files → Global Maven settings.xml).
+     AUCUN mot de passe ici : dans "Server Credentials", associe le credential "nexus-cred"
+     aux serverId maven-releases et maven-snapshots ; le plugin Config File Provider les injecte au build. -->
+<settings xmlns="http://maven.apache.org/SETTINGS/1.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.2.0 https://maven.apache.org/xsd/settings-1.2.0.xsd">
+  <servers>
+    <!-- les <id> doivent correspondre à ceux de <distributionManagement> dans pom.xml -->
+    <server>
+      <id>maven-releases</id>
+    </server>
+    <server>
+      <id>maven-snapshots</id>
+    </server>
+  </servers>
+</settings>

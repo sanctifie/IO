@@ -1,0 +1,48 @@
+# Identité dédiée à Jenkins, limitée au namespace "webapps" (moindre privilège).
+# L'original donnait apiGroups ["*"] / resources ["*"] : tous les droits sur le namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: webapps
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: jenkins
+  namespace: webapps
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: app-role
+  namespace: webapps
+rules:
+  - apiGroups: ["", "apps", "autoscaling", "networking.k8s.io"]
+    resources: ["pods", "services", "configmaps", "secrets", "deployments", "replicasets",
+                "horizontalpodautoscalers", "ingresses", "persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: app-rolebinding
+  namespace: webapps
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: app-role
+subjects:
+  - kind: ServiceAccount
+    name: jenkins
+    namespace: webapps
+---
+# Jeton longue durée du ServiceAccount (à copier dans le credential Jenkins "k8-cred")
+#   kubectl -n webapps get secret jenkins-token -o jsonpath='{.data.token}' | base64 -d
+apiVersion: v1
+kind: Secret
+metadata:
+  name: jenkins-token
+  namespace: webapps
+  annotations:
+    kubernetes.io/service-account.name: jenkins
+type: kubernetes.io/service-account-token

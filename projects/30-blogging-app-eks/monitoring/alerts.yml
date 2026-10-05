@@ -1,0 +1,18 @@
+groups:
+  - name: disponibilite
+    rules:
+      - alert: SiteInjoignable
+        expr: probe_success == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.instance }} ne répond plus"
+          description: "La sonde Blackbox échoue depuis plus d'une minute."
+      - alert: SiteLent
+        expr: probe_duration_seconds > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }} répond en plus de 2 s"
