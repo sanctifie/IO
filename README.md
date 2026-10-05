@@ -8,7 +8,8 @@ Suivi de notre progression sur le programme [ZaheerrAhmed/DevOps-Projects](https
 
 ## Organisation
 
-- Un dossier par projet : `projects/NN-nom-court/`
+- Un dossier par projet : `projects/NN-nom-court/`, avec le code prêt à l'emploi et un `NOTES.md` → **[index des 30 projets](projects/README.md)**
+- Scripts et Terraform communs : [`common/`](common/)
 - Chaque dossier contient un `NOTES.md` (étapes réalisées, commandes, problèmes rencontrés, captures) et le code/IaC produit.
 - On coche la case ici quand un projet est terminé et validé.
 - ⚠️ Les projets AWS/Azure créent des ressources payantes : **toujours détruire l'infra à la fin** (`terraform destroy`, suppression des clusters EKS/AKS, NAT Gateways, Load Balancers…).
