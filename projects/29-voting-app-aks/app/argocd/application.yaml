@@ -1,0 +1,19 @@
+# Le dépôt Azure Repos doit d'abord être déclaré dans Argo CD (Settings → Repositories, PAT "Code: Read").
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: voting-app
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://dev.azure.com/TON-ORG/votingApp/_git/votingApp # ← ton dépôt
+    targetRevision: main
+    path: k8s-specifications
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

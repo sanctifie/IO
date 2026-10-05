@@ -1,0 +1,61 @@
+# Pipeline du microservice "worker" : ne se déclenche que si worker/ change.
+# Variable secrète à créer dans le pipeline : AZDO_PAT (PAT "Code: Read & write").
+trigger:
+  branches:
+    include: [main]
+  paths:
+    include: [worker/*]
+
+resources:
+  - repo: self
+
+variables:
+  dockerRegistryServiceConnection: 'votingACR' # nom de ta service connection Docker Registry
+  imageRepository: 'votingapp/worker'
+  containerRegistry: 'TONACR.azurecr.io' # ← ton ACR
+  dockerfilePath: '$(Build.SourcesDirectory)/worker/Dockerfile'
+  tag: '$(Build.BuildId)'
+
+pool:
+  name: 'votingApp-Agent' # agent auto-hébergé (garde l'image entre les stages Build et Push)
+
+stages:
+  - stage: Build
+    jobs:
+      - job: Build
+        steps:
+          - task: Docker@2
+            displayName: Construire l'image
+            inputs:
+              containerRegistry: $(dockerRegistryServiceConnection)
+              repository: $(imageRepository)
+              command: build
+              Dockerfile: $(dockerfilePath)
+              buildContext: '$(Build.SourcesDirectory)/worker'
+              tags: $(tag)
+
+  - stage: Push
+    jobs:
+      - job: Push
+        steps:
+          - checkout: none
+          - task: Docker@2
+            displayName: Pousser l'image dans ACR
+            inputs:
+              containerRegistry: $(dockerRegistryServiceConnection)
+              repository: $(imageRepository)
+              command: push
+              tags: $(tag)
+
+  - stage: Update_K8s
+    jobs:
+      - job: Update
+        steps:
+          - task: ShellScript@2
+            displayName: Mettre à jour le manifest Kubernetes (GitOps)
+            inputs:
+              scriptPath: 'scripts/updateK8sManifests.sh'
+              args: 'worker $(imageRepository) $(tag)'
+            env:
+              AZDO_PAT: $(AZDO_PAT) # variable secrète : à passer explicitement
+              ACR_LOGIN_SERVER: $(containerRegistry)
