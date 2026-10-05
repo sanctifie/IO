@@ -1,0 +1,13 @@
+# Étape 5 : un Pod seul (pour comprendre ; jamais en production)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: game-2048-pod
+  labels:
+    app: 2048-ws
+spec:
+  containers:
+    - name: game-2048
+      image: blackicebird/2048
+      ports:
+        - containerPort: 80

@@ -1,0 +1,22 @@
+# Étape 7 : le Deployment (auto-réparation, mise à l'échelle, rolling updates)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: game-2048
+spec:
+  replicas: 3
+  selector:
+    matchLabels: { app: 2048-ws }
+  template:
+    metadata:
+      labels: { app: 2048-ws }
+    spec:
+      containers:
+        - name: game-2048
+          image: blackicebird/2048
+          ports: [{ containerPort: 80 }]
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+          readinessProbe:
+            httpGet: { path: /, port: 80 }

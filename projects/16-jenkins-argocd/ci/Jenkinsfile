@@ -1,0 +1,89 @@
+// Projet 16 — pipeline CI (dépôt register-app). Version corrigée du Jenkinsfile d'origine.
+// Prérequis Jenkins : agent label "Jenkins-Agent", outils "Java17" et "Maven3", serveur Sonar "sonarqube-server",
+// credentials "github", "dockerhub", "jenkins-sonarqube-token", "JENKINS_API_TOKEN".
+pipeline {
+    agent { label 'Jenkins-Agent' }
+    tools {
+        jdk 'Java17'
+        maven 'Maven3'
+    }
+    environment {
+        APP_NAME          = "register-app-pipeline"
+        RELEASE           = "1.0.0"
+        DOCKER_USER       = "REMPLACER-PAR-TON-PSEUDO-DOCKERHUB"
+        IMAGE_NAME        = "${DOCKER_USER}/${APP_NAME}"
+        IMAGE_TAG         = "${RELEASE}-${BUILD_NUMBER}"
+        JENKINS_API_TOKEN = credentials('JENKINS_API_TOKEN')
+        JENKINS_USER      = "REMPLACER-PAR-TON-UTILISATEUR-JENKINS"
+        CD_JOB_URL        = "http://REMPLACER-IP-PRIVEE-MASTER:8080/job/gitops-register-app-cd/buildWithParameters"
+    }
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '5'))
+    }
+    stages {
+        stage('Cleanup Workspace') { steps { cleanWs() } }
+
+        stage('Checkout from SCM') {
+            steps { git branch: 'main', credentialsId: 'github', url: 'https://github.com/REMPLACER/register-app' }
+        }
+
+        stage('Build Application') { steps { sh 'mvn -B clean package -DskipTests' } }
+
+        stage('Test Application') { steps { sh 'mvn -B test' } }
+
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv(credentialsId: 'jenkins-sonarqube-token', installationName: 'sonarqube-server') {
+                    sh 'mvn -B sonar:sonar'
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: false, credentialsId: 'jenkins-sonarqube-token'
+                }
+            }
+        }
+
+        stage('Build & Push Docker Image') {
+            steps {
+                script {
+                    docker.withRegistry('', 'dockerhub') {
+                        def image = docker.build("${IMAGE_NAME}:${IMAGE_TAG}")
+                        image.push()
+                        image.push('latest')
+                    }
+                }
+            }
+        }
+
+        stage('Trivy Scan') {
+            steps {
+                // On scanne l'image construite PAR CE build (tag précis), pas "latest"
+                sh "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy image ${IMAGE_NAME}:${IMAGE_TAG} --no-progress --scanners vuln --exit-code 0 --severity HIGH,CRITICAL --format table"
+            }
+        }
+
+        stage('Cleanup Artifacts') {
+            steps {
+                sh "docker rmi ${IMAGE_NAME}:${IMAGE_TAG} ${IMAGE_NAME}:latest || true"
+            }
+        }
+
+        stage('Trigger CD Pipeline') {
+            steps {
+                sh '''
+                  curl -s -f --user "$JENKINS_USER:$JENKINS_API_TOKEN" -X POST \
+                    --data "IMAGE_TAG=$IMAGE_TAG" "$CD_JOB_URL?token=gitops-token"
+                '''
+            }
+        }
+    }
+    // Décommente une fois l'e-mail configuré (voir projet 09, étape 6)
+    // post {
+    //     failure { emailext subject: "${env.JOB_NAME} #${env.BUILD_NUMBER} : échec", body: "${env.BUILD_URL}", to: 'toi@exemple.com' }
+    //     success { emailext subject: "${env.JOB_NAME} #${env.BUILD_NUMBER} : succès", body: "${env.BUILD_URL}", to: 'toi@exemple.com' }
+    // }
+}

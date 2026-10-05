@@ -1,0 +1,14 @@
+# Le chart Robot Shop impose "storageClassName: gp2" (en dur dans redis-statefulset.yaml).
+# Sur les clusters EKS récents, cette StorageClass n'est plus créée/marquée par défaut : on la (re)crée,
+# servie par le pilote EBS CSI (volumes gp3, moins chers que gp2, sous le nom attendu par le chart).
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gp2
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: ebs.csi.aws.com
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete
+parameters:
+  type: gp3

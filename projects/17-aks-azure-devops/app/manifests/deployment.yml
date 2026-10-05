@@ -1,0 +1,19 @@
+apiVersion : apps/v1
+kind: Deployment
+metadata:
+  name: ksapplication 
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ksapplication
+  template:
+    metadata:
+      labels:
+        app: ksapplication 
+    spec:
+      containers:
+        - name: ksapplication 
+          image: ksapplication   # réécrite par la tâche KubernetesManifest du pipeline
+          ports:
+          - containerPort: 8888

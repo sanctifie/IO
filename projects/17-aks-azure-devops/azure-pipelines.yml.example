@@ -1,0 +1,59 @@
+# Projet 17 — modèle « Deploy to Azure Kubernetes Service » commenté (Azure DevOps génère le sien avec tes IDs).
+# À placer à la racine du dépôt de l'application (dossier app/) sous le nom azure-pipelines.yml.
+trigger:
+  - main
+
+resources:
+  - repo: self
+
+variables:
+  dockerRegistryServiceConnection: 'REMPLACER-ID-SERVICE-CONNECTION-ACR'
+  imageRepository: 'ksapplication'
+  containerRegistry: 'REMPLACER.azurecr.io'
+  dockerfilePath: '**/Dockerfile'
+  tag: '$(Build.BuildId)'
+  imagePullSecret: 'acr-auth'
+  vmImageName: 'ubuntu-latest'
+
+stages:
+  - stage: Build
+    jobs:
+      - job: Build
+        pool: { vmImage: $(vmImageName) }
+        steps:
+          - task: Docker@2
+            displayName: Build et push vers ACR
+            inputs:
+              command: buildAndPush
+              repository: $(imageRepository)
+              dockerfile: $(dockerfilePath)
+              containerRegistry: $(dockerRegistryServiceConnection)
+              tags: $(tag)
+          - upload: manifests
+            artifact: manifests
+
+  - stage: Deploy
+    dependsOn: Build
+    jobs:
+      - deployment: Deploy
+        pool: { vmImage: $(vmImageName) }
+        environment: 'k8s-application.default'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: KubernetesManifest@1
+                  displayName: Secret de pull (redondant avec --attach-acr, mais inoffensif)
+                  inputs:
+                    action: createSecret
+                    secretName: $(imagePullSecret)
+                    dockerRegistryEndpoint: $(dockerRegistryServiceConnection)
+                - task: KubernetesManifest@1
+                  displayName: Déployer (l'image du manifest est réécrite avec le tag du build)
+                  inputs:
+                    action: deploy
+                    manifests: |
+                      $(Pipeline.Workspace)/manifests/deployment.yml
+                      $(Pipeline.Workspace)/manifests/service.yml
+                    imagePullSecrets: $(imagePullSecret)
+                    containers: $(containerRegistry)/$(imageRepository):$(tag)
