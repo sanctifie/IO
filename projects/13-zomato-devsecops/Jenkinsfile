@@ -1,0 +1,107 @@
+// Pipeline DevSecOps Zomato (projet 13) : les contrôles de sécurité BLOQUENT la livraison.
+// Credentials : Sonar-token, docker, nvd-api-key. Tools : jdk17, node20, sonar-scanner, DP-Check, docker.
+pipeline {
+    agent any
+    tools {
+        jdk 'jdk17'
+        nodejs 'node20'
+    }
+    environment {
+        SCANNER_HOME = tool 'sonar-scanner'
+        IMAGE = 'TON-PSEUDO-DOCKERHUB/zomato'
+    }
+    options {
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+    stages {
+        stage('Clean workspace') { steps { cleanWs() } }
+
+        stage('Checkout') {
+            steps { git branch: 'main', url: 'https://github.com/TON-PSEUDO/Zomato-Clone.git' }
+        }
+
+        stage('Secrets (gitleaks)') {
+            // échoue (code 1) si un secret est trouvé dans les fichiers
+            steps { sh 'docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest detect --source /repo --no-git --redact -v' }
+        }
+
+        stage('Analyse SonarQube') {
+            steps {
+                withSonarQubeEnv('sonar-server') {
+                    sh '$SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=Zomato -Dsonar.projectKey=Zomato -Dsonar.exclusions=build/**,node_modules/**'
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true, credentialsId: 'Sonar-token'   // bloquant
+                }
+            }
+        }
+
+        stage('Dépendances') { steps { sh 'npm ci --no-audit --no-fund' } }
+
+        stage('OWASP Dependency-Check') {
+            steps {
+                withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_KEY')]) {
+                    dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit --nvdApiKey ' + env.NVD_KEY,
+                                    odcInstallation: 'DP-Check'
+                }
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+
+        stage('Trivy FS') {
+            steps {
+                sh 'trivy fs --format table -o trivyfs.txt .'
+                // bloque s'il reste une faille CRITIQUE pour laquelle un correctif existe
+                sh 'trivy fs --severity CRITICAL --exit-code 1 --ignore-unfixed .'
+            }
+        }
+
+        stage('Build & push Docker') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {
+                        sh '''
+                          docker build -t "$IMAGE:$BUILD_NUMBER" -t "$IMAGE:latest" .
+                          docker push "$IMAGE:$BUILD_NUMBER"
+                          docker push "$IMAGE:latest"
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Trivy image') {
+            steps {
+                sh 'trivy image --format table -o trivyimage.txt "$IMAGE:$BUILD_NUMBER"'
+                sh 'trivy image --severity CRITICAL --exit-code 1 --ignore-unfixed "$IMAGE:$BUILD_NUMBER"'
+            }
+        }
+
+        stage('Déployer') {
+            steps {
+                sh '''
+                  docker rm -f zomato || true
+                  docker run -d --name zomato --restart unless-stopped -p 3000:8080 "$IMAGE:$BUILD_NUMBER"
+                  sleep 5
+                  curl -fsS -o /dev/null http://localhost:3000/   # test de fumée
+                '''
+            }
+        }
+    }
+    post {
+        always {
+            archiveArtifacts artifacts: 'trivy*.txt,dependency-check-report.*', allowEmptyArchive: true
+            emailext attachLog: true,
+                subject: "${currentBuild.currentResult} : ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body: "Projet : ${env.JOB_NAME}<br/>Build : ${env.BUILD_NUMBER}<br/>URL : ${env.BUILD_URL}",
+                to: 'ton.compte@gmail.com',
+                attachmentsPattern: 'trivyfs.txt,trivyimage.txt'
+        }
+    }
+}

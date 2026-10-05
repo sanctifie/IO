@@ -1,0 +1,107 @@
+// Pipeline DevSecOps Netflix (projet 09) — version corrigée de "jenkinsfile" d'origine :
+//  - clé TMDB lue dans un credential (et non en clair) ;
+//  - même nom d'image pour le build, le push et le scan Trivy ;
+//  - déploiement Docker rejouable (docker rm -f) ; tag par numéro de build.
+// Credentials : Sonar-token, docker, nvd-api-key, tmdb-api-key, k8s (Secret file).
+// Tools : jdk17, node20 (NodeJS 20 LTS), sonar-scanner, DP-Check, docker.
+pipeline {
+    agent any
+    tools {
+        jdk 'jdk17'
+        nodejs 'node20'
+    }
+    environment {
+        SCANNER_HOME = tool 'sonar-scanner'
+        IMAGE = 'TON-PSEUDO-DOCKERHUB/netflix'
+    }
+    options {
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+    stages {
+        stage('Clean workspace') { steps { cleanWs() } }
+
+        stage('Checkout') {
+            steps { git branch: 'main', url: 'https://github.com/TON-PSEUDO/Netflix-clone.git' }
+        }
+
+        stage('Analyse SonarQube') {
+            steps {
+                withSonarQubeEnv('sonar-server') {
+                    sh '$SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=Netflix -Dsonar.projectKey=Netflix'
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: false, credentialsId: 'Sonar-token'
+                }
+            }
+        }
+
+        stage('Dépendances') { steps { sh 'yarn install --frozen-lockfile || npm install' } }
+
+        stage('OWASP Dependency-Check') {
+            steps {
+                withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_KEY')]) {
+                    dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit --nvdApiKey ' + env.NVD_KEY,
+                                    odcInstallation: 'DP-Check'
+                }
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+
+        stage('Trivy FS') { steps { sh 'trivy fs --scanners vuln,secret,misconfig . > trivyfs.txt' } }
+
+        stage('Build & push Docker') {
+            steps {
+                withCredentials([string(credentialsId: 'tmdb-api-key', variable: 'TMDB')]) {
+                    script {
+                        withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {
+                            sh '''
+                              docker build --build-arg TMDB_V3_API_KEY="$TMDB" -t "$IMAGE:$BUILD_NUMBER" -t "$IMAGE:latest" .
+                              docker push "$IMAGE:$BUILD_NUMBER"
+                              docker push "$IMAGE:latest"
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Trivy image') { steps { sh 'trivy image "$IMAGE:$BUILD_NUMBER" > trivyimage.txt' } }
+
+        stage('Déployer en conteneur') {
+            steps {
+                sh '''
+                  docker rm -f netflix || true
+                  docker run -d --name netflix --restart unless-stopped -p 8081:80 "$IMAGE:$BUILD_NUMBER"
+                '''
+            }
+        }
+
+        // Étape 9 : décommenter une fois le cluster Kubernetes prêt (credential "k8s" = kubeconfig)
+        // stage('Déployer sur Kubernetes') {
+        //     steps {
+        //         dir('Kubernetes') {
+        //             withKubeConfig(credentialsId: 'k8s') {
+        //                 sh 'kubectl apply -f deployment.yml -f service.yml'
+        //                 sh 'kubectl rollout restart deployment/netflix-app'
+        //                 sh 'kubectl rollout status deployment/netflix-app --timeout=180s'
+        //             }
+        //         }
+        //     }
+        // }
+    }
+    post {
+        always {
+            emailext attachLog: true,
+                subject: "${currentBuild.currentResult} : ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body: "Projet : ${env.JOB_NAME}<br/>Build : ${env.BUILD_NUMBER}<br/>URL : ${env.BUILD_URL}",
+                to: 'ton.compte@gmail.com',
+                attachmentsPattern: 'trivyfs.txt,trivyimage.txt'
+        }
+    }
+}

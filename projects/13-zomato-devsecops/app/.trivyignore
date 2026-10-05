@@ -1,0 +1,3 @@
+# Exceptions Trivy documentées : une ligne par CVE, avec la raison et une date de revue.
+# Exemple :
+# CVE-2099-00000  # paquet de build uniquement, absent de l'image finale — revue le 2026-12-01

@@ -1,0 +1,51 @@
+# buildspec réécrit : l'original était presque entièrement commenté (rien n'était construit)
+# et son bloc post_build était hors de "phases".
+version: 0.2
+
+env:
+  parameter-store:
+    SONAR_TOKEN: /cicd/sonar/sonar-token
+    SONAR_URL: /cicd/sonar/url
+  variables:
+    REPO_NAME: swiggy
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 20
+      java: corretto17
+    commands:
+      - curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+      - trivy --version
+  pre_build:
+    commands:
+      - ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+      - REGISTRY=$ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - TAG=$(echo "$CODEBUILD_RESOLVED_SOURCE_VERSION" | cut -c1-7)
+      - IMAGE_URI=$REGISTRY/$REPO_NAME:$TAG
+      - aws ecr get-login-password | docker login --username AWS --password-stdin "$REGISTRY"
+      - echo "Analyse SonarQube"
+      # le paquet npm @sonar/scan fournit le scanner (sa commande s'appelle sonar-scanner-npm)
+      - npx --yes @sonar/scan -Dsonar.projectKey=swiggy -Dsonar.sources=app/src -Dsonar.host.url="$SONAR_URL" -Dsonar.token="$SONAR_TOKEN"
+      - echo "Scan Trivy du code"
+      - trivy fs --format table -o trivyfs.txt app
+  build:
+    commands:
+      - docker build -t "$IMAGE_URI" app
+      - trivy image --format table -o trivyimage.txt "$IMAGE_URI"
+      # bloque le pipeline s'il reste une faille CRITIQUE corrigeable
+      - trivy image --severity CRITICAL --exit-code 1 --ignore-unfixed "$IMAGE_URI"
+  post_build:
+    commands:
+      - docker push "$IMAGE_URI"
+      # fichier lu par l'action "Amazon ECS (Blue/Green)" pour remplacer <IMAGE1_NAME> dans taskdef.json
+      - printf '{"ImageURI":"%s"}' "$IMAGE_URI" > imageDetail.json
+      - cat trivyfs.txt trivyimage.txt
+
+artifacts:
+  files:
+    - appspec.yaml
+    - taskdef.json
+    - imageDetail.json
+    - trivyfs.txt
+    - trivyimage.txt

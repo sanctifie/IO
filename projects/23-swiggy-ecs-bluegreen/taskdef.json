@@ -1,0 +1,25 @@
+{
+  "family": "swiggy",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "arn:aws:iam::123456789012:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "swiggy",
+      "image": "<IMAGE1_NAME>",
+      "essential": true,
+      "portMappings": [{ "containerPort": 3000, "protocol": "tcp" }],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/swiggy",
+          "awslogs-region": "eu-west-3",
+          "awslogs-stream-prefix": "swiggy",
+          "awslogs-create-group": "true"
+        }
+      }
+    }
+  ]
+}

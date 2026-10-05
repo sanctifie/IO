@@ -1,0 +1,9 @@
+version: 0.0
+Resources:
+  - TargetService:
+      Type: AWS::ECS::Service
+      Properties:
+        TaskDefinition: <TASK_DEFINITION> # remplacé par CodePipeline par la nouvelle révision
+        LoadBalancerInfo:
+          ContainerName: "swiggy"
+          ContainerPort: 3000
