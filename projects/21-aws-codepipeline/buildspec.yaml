@@ -1,0 +1,35 @@
+version: 0.2
+
+env:
+  parameter-store:
+    USERNAME: /myapp/docker-credentials/username   # pseudo Docker Hub
+    PASSWORD: /myapp/docker-credentials/password   # token Docker Hub (SecureString)
+    KEY: /myapp/api/key                            # clé API TMDB (SecureString)
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 20   # "latest" est refusé par certaines images CodeBuild
+  pre_build:
+    commands:
+      # login AVANT le build : évite la limite de pulls anonymes de Docker Hub
+      - echo "$PASSWORD" | docker login -u "$USERNAME" --password-stdin
+      - TAG="$(echo "$CODEBUILD_RESOLVED_SOURCE_VERSION" | cut -c1-7)"
+      - IMAGE="$USERNAME/netflix-react-app"
+  build:
+    commands:
+      - docker build app -t "$IMAGE:$TAG" -t "$IMAGE:latest" --build-arg TMDB_V3_API_KEY="$KEY"
+  post_build:
+    commands:
+      - docker push "$IMAGE:$TAG"
+      - docker push "$IMAGE:latest"
+      # le nom exact de l'image est transmis à CodeDeploy dans l'artefact
+      - echo "$IMAGE:$TAG" > image.txt
+
+artifacts:
+  # uniquement ce dont CodeDeploy a besoin (et pas tout le code source)
+  files:
+    - appspec.yml
+    - image.txt
+    - scripts/**/*
+  discard-paths: no

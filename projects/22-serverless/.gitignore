@@ -1,0 +1,7 @@
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+tfplan
+crash.log
+serverless-api.zip
+serverless-api/node_modules/

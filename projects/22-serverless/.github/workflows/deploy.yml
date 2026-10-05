@@ -1,0 +1,71 @@
+# À placer à la racine de TON dépôt "serverless-api" (.github/workflows/deploy.yml).
+# Plan sur chaque pull request, apply après fusion dans main. Identifiants AWS par OIDC (aucune clé stockée).
+name: Serverless API
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # obtenir un jeton OIDC pour AWS
+
+concurrency:
+  group: terraform-serverless # jamais deux terraform en parallèle sur le même état
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-west-3
+  TF_IN_AUTOMATION: "true"
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20" # même version que le runtime Lambda nodejs20.x
+          cache: npm
+          cache-dependency-path: serverless-api/package-lock.json
+
+      - name: Tests et paquet Lambda
+        working-directory: serverless-api
+        run: |
+          npm ci
+          npm test --if-present
+          npm ci --omit=dev
+          zip -qr ../serverless-api.zip . -x "*.git*" ".env*"
+          ls -lh ../serverless-api.zip
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.16.5
+
+      - run: terraform fmt -check -recursive
+      - run: terraform init -input=false
+      - run: terraform validate
+      - run: terraform plan -input=false -out=tfplan
+
+      - name: Apply (uniquement sur main)
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: terraform apply -input=false tfplan
+
+      - name: Test de fumée
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          API="$(terraform output -raw api_url)"
+          for i in $(seq 1 10); do
+            if curl -fsS "$API/healthz"; then echo " healthz OK"; exit 0; fi
+            echo "tentative $i : l'API (ou Aurora) se réveille…"; sleep 10
+          done
+          exit 1
