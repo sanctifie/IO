@@ -1,0 +1,86 @@
+// Pipeline applicatif Reddit (projet 27) : scans → image → mise à jour du manifest GitOps (Argo CD déploie).
+// Credentials : sonar-token, docker, github (token écriture sur ton fork), nvd-api-key,
+//               reddit-env (Secret file = ton .env.production Firebase).
+// Tools : jdk (17), nodejs (20), sonar-scanner, DP-Check, docker.
+// ⚠ Exclure le dossier K8s/ du déclenchement (sinon le commit du manifest relance le pipeline).
+pipeline {
+    agent any
+    tools {
+        jdk 'jdk'
+        nodejs 'nodejs'
+    }
+    environment {
+        SCANNER_HOME = tool 'sonar-scanner'
+        IMAGE        = 'ton-pseudo-dockerhub/reddit'
+        GIT_REPO     = 'github.com/TON-PSEUDO/Reddit-Project.git'
+    }
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+    }
+    stages {
+        stage('Clean workspace') { steps { cleanWs() } }
+        stage('Checkout') {
+            steps { git branch: 'main', url: "https://${env.GIT_REPO}" }
+        }
+        stage('Dépendances') { steps { sh 'npm ci --no-audit --no-fund' } }
+        stage('Analyse SonarQube') {
+            steps {
+                withSonarQubeEnv('sonar-server') {
+                    sh '$SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=Reddit -Dsonar.projectKey=Reddit -Dsonar.exclusions=node_modules/**,.next/**'
+                }
+            }
+        }
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
+                }
+            }
+        }
+        stage('OWASP Dependency-Check') {
+            steps {
+                withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_KEY')]) {
+                    dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit --nvdApiKey ' + env.NVD_KEY,
+                                    odcInstallation: 'DP-Check'
+                }
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+        stage('Trivy FS') { steps { sh 'trivy fs --skip-dirs node_modules . > trivyfs.txt' } }
+        stage('Build & push Docker') {
+            steps {
+                withCredentials([file(credentialsId: 'reddit-env', variable: 'ENV_FILE')]) {
+                    sh 'cp "$ENV_FILE" .env.production'
+                }
+                script {
+                    withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {
+                        sh 'docker build -t "$IMAGE:$BUILD_NUMBER" . && docker push "$IMAGE:$BUILD_NUMBER"'
+                    }
+                }
+                sh 'rm -f .env.production'
+            }
+        }
+        stage('Trivy image') {
+            // même image que celle construite (l'original scannait reddit:latest, jamais poussée)
+            steps { sh 'trivy image "$IMAGE:$BUILD_NUMBER" > trivyimage.txt' }
+        }
+        stage('Mise à jour du manifest GitOps') {
+            steps {
+                withCredentials([string(credentialsId: 'github', variable: 'GITHUB_TOKEN')]) {
+                    sh '''
+                      git config user.email "jenkins@exemple.com"
+                      git config user.name  "Jenkins"
+                      sed -i -E "s#image: .*/reddit:.*#image: ${IMAGE}:${BUILD_NUMBER}#" K8s/deployment.yml
+                      git add K8s/deployment.yml
+                      git commit -m "ci: reddit:${BUILD_NUMBER} [skip ci]" || echo "Rien à commiter"
+                      git push "https://${GITHUB_TOKEN}@${GIT_REPO}" HEAD:main
+                    '''
+                }
+            }
+        }
+    }
+    post {
+        always { archiveArtifacts artifacts: 'trivy*.txt', allowEmptyArchive: true }
+    }
+}

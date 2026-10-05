@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: reddit-clone-service
+spec:
+  type: ClusterIP # exposé par l'Ingress (ALB) ; le LoadBalancer d'origine créait un 2e load balancer
+  selector:
+    app: reddit-clone
+  ports:
+    - port: 3000
+      targetPort: 3000
+      protocol: TCP

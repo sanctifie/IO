@@ -1,0 +1,43 @@
+// Crée / détruit le cluster EKS du projet 27 (Terraform dans EKS-TF/).
+// Pas de clés AWS : Jenkins utilise le rôle IAM de son instance (serveur du projet 19).
+pipeline {
+    agent any
+    parameters {
+        string(name: 'File-Name', defaultValue: 'variables.tfvars', description: 'Fichier de variables Terraform')
+        choice(name: 'Terraform-Action', choices: ['apply', 'destroy'], description: 'Action Terraform')
+    }
+    environment {
+        AWS_DEFAULT_REGION = 'eu-west-3'
+        TF_IN_AUTOMATION   = 'true'
+    }
+    options { disableConcurrentBuilds() }
+    stages {
+        stage('Checkout') {
+            steps { git branch: 'main', url: 'https://github.com/TON-PSEUDO/Reddit-Project.git' }
+        }
+        stage('Terraform init') {
+            steps { dir('EKS-TF') { sh 'terraform init -input=false' } }
+        }
+        stage('Terraform validate') {
+            steps { dir('EKS-TF') { sh 'terraform validate' } }
+        }
+        stage('Terraform plan') {
+            steps {
+                dir('EKS-TF') {
+                    script {
+                        def destroyFlag = params['Terraform-Action'] == 'destroy' ? '-destroy' : ''
+                        sh "terraform plan -input=false ${destroyFlag} -var-file=${params['File-Name']} -out=tfplan"
+                    }
+                }
+                // validation humaine (absente de l'original)
+                input(message: "Appliquer ce plan (${params['Terraform-Action']}) ?", ok: 'Confirmer')
+            }
+        }
+        stage('Terraform apply/destroy') {
+            steps { dir('EKS-TF') { sh 'terraform apply -input=false tfplan' } }
+        }
+    }
+    post {
+        always { dir('EKS-TF') { sh 'rm -f tfplan' } }
+    }
+}

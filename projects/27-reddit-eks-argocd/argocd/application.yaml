@@ -1,0 +1,18 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: reddit
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/TON-PSEUDO/Reddit-Project.git # ← ton fork
+    targetRevision: main
+    path: K8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
