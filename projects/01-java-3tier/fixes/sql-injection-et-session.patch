@@ -1,0 +1,96 @@
+diff --git a/app/src/main/java/com/dpt/demo/login.java b/app/src/main/java/com/dpt/demo/login.java
+index 4d92426..1cb7067 100644
+--- a/app/src/main/java/com/dpt/demo/login.java
++++ b/app/src/main/java/com/dpt/demo/login.java
+@@ -2,6 +2,7 @@ package com.dpt.demo;
+ 
+ import java.sql.Connection;
+ import java.sql.DriverManager;
++import java.sql.PreparedStatement;
+ import java.sql.ResultSet;
+ import java.sql.SQLException;
+ import java.sql.Statement;
+@@ -26,32 +27,34 @@ public class login {
+ 	@Value("${spring.datasource.password}")
+ 	private String DBpassword;
+ 
+-	private String userId = "";
+ 
+-	private String errorMessage="";
+ 	
+ 	@RequestMapping(value = "login", method = RequestMethod.POST)
+ 	public ModelAndView login(String userName, String password) throws ClassNotFoundException {
+ 
+ 		
+-		Class.forName("com.mysql.jdbc.Driver");
+-		// validate user credentials
+-		String query = "select * from Employee where username='" + userName + "' and password='"+password+"'";
++		Class.forName("com.mysql.cj.jdbc.Driver");   // enregistre le pilote (nécessaire dans Tomcat)
++		// Variables LOCALES : un champ du contrôleur (singleton) serait partagé entre tous les visiteurs.
++		String userId = "";
++		String errorMessage = "";
++		// Requête paramétrée : les valeurs saisies ne sont jamais interprétées comme du SQL.
++		String query = "select * from Employee where username = ? and password = ?";
+ 		try (Connection con = DriverManager.getConnection(url, DBusername, DBpassword);
+-				Statement st = con.createStatement();
+-				ResultSet rs = st.executeQuery(query)) {
+-			if (rs.next()) {
+-				System.out.println(
+-						rs.getString(1) + " " + rs.getString(2) + " " + rs.getString(3) + " " + rs.getString(4));
+-				userId = rs.getString(4);
++				PreparedStatement st = con.prepareStatement(query)) {
++			st.setString(1, userName);
++			st.setString(2, password);
++			try (ResultSet rs = st.executeQuery()) {
++				if (rs.next()) {
++					userId = rs.getString(4);
++				}
+ 			}
+ 		} catch (SQLException ex) {
+ 			System.out.println(ex.getMessage());
+-			errorMessage=ex.getMessage();
++			errorMessage = "Erreur technique, réessayez plus tard.";
+ 		}
+ 
+ 		ModelAndView mv;
+-		if (userId != "")
++		if (!userId.isEmpty())
+ 		{			
+ 			mv = new ModelAndView("user");
+ 			mv.addObject("username", userId);
+diff --git a/app/src/main/java/com/dpt/demo/register.java b/app/src/main/java/com/dpt/demo/register.java
+index 7b687c2..f5dd56f 100644
+--- a/app/src/main/java/com/dpt/demo/register.java
++++ b/app/src/main/java/com/dpt/demo/register.java
+@@ -3,7 +3,7 @@ package com.dpt.demo;
+ import java.sql.Connection;
+ import java.sql.DriverManager;
+ import java.sql.SQLException;
+-import java.sql.Statement;
++import java.sql.PreparedStatement;
+ 
+ import org.springframework.beans.factory.annotation.Value;
+ import org.springframework.stereotype.Controller;
+@@ -37,13 +37,16 @@ public class register {
+ 	@RequestMapping(value = "register", method = RequestMethod.POST)
+ 	public ModelAndView register(String firstName,String lastName,String email,String userName,String password) throws ClassNotFoundException
+ 	{
+-		Class.forName("com.mysql.jdbc.Driver");
+-		//Add employee here
++		Class.forName("com.mysql.cj.jdbc.Driver");   // enregistre le pilote (nécessaire dans Tomcat)
++		String sql = "insert into Employee (first_name,last_name,email,username,password,regdate) values (?, ?, ?, ?, ?, CURDATE())";
+ 		try (Connection con = DriverManager.getConnection(url, DBusername, DBpassword);
+-				Statement st = con.createStatement()) {
+-
+-			String sql = "insert into Employee (first_name,last_name,email,username,password,regdate) values('"+firstName+"','"+lastName+"','"+email+"','"+userName+"','"+password+"',CURDATE());";
+-			st.execute(sql);
++				PreparedStatement st = con.prepareStatement(sql)) {
++			st.setString(1, firstName);
++			st.setString(2, lastName);
++			st.setString(3, email);
++			st.setString(4, userName);
++			st.setString(5, password);   // amélioration suivante : stocker un hash BCrypt, jamais le mot de passe en clair
++			st.executeUpdate();
+ 
+ 		} catch (SQLException ex) {
+ 

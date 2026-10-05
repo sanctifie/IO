@@ -1,0 +1,20 @@
+[Unit]
+Description=Apache Tomcat 9
+After=network.target
+
+[Service]
+Type=forking
+User=tomcat
+Group=tomcat
+Environment=JAVA_HOME=/usr/lib/jvm/java-11-amazon-corretto
+Environment=CATALINA_HOME=/opt/tomcat
+Environment=CATALINA_PID=/opt/tomcat/temp/tomcat.pid
+Environment="CATALINA_OPTS=-Xms256m -Xmx512m"
+# Variables de l'application (connexion à la base), écrites par le user data
+EnvironmentFile=-/etc/default/dptweb
+ExecStart=/opt/tomcat/bin/startup.sh
+ExecStop=/opt/tomcat/bin/shutdown.sh
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

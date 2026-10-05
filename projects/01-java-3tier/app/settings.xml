@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Projet 01 : identifiants JFrog lus dans l'environnement (JFROG_USER, JFROG_TOKEN), jamais en clair -->
+<settings xmlns="http://maven.apache.org/SETTINGS/1.2.0">
+  <servers>
+    <server>
+      <id>central</id>
+      <username>${env.JFROG_USER}</username>
+      <password>${env.JFROG_TOKEN}</password>
+    </server>
+  </servers>
+  <mirrors>
+    <mirror>
+      <id>central</id>
+      <mirrorOf>*</mirrorOf>
+      <url>https://TON-NOM.jfrog.io/artifactory/libs-release</url>
+    </mirror>
+  </mirrors>
+</settings>

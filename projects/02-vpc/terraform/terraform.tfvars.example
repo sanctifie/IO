@@ -1,0 +1,7 @@
+# Copier en terraform.tfvars (non commité) et adapter
+my_ip_cidr         = "82.64.10.5/32"
+key_name           = "io-key"
+golden_ami_id      = ""            # ex : "ami-0123456789abcdef0" une fois ta Golden AMI créée
+repo_url           = "https://github.com/sanctifie/IO.git"
+config_bucket_name = "io-02-config-<prenom>"
+domain_zone        = ""
