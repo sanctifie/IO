@@ -1,0 +1,15 @@
+{
+  "name": "bible-devops-cloud",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs ../Bible-DevOps-Cloud.pdf && python3 paginate.py ../Bible-DevOps-Cloud.pdf && node build.mjs ../Bible-DevOps-Cloud.pdf"
+  },
+  "dependencies": {
+    "@fontsource/inter": "^5.0.0",
+    "@fontsource/jetbrains-mono": "^5.0.0",
+    "highlight.js": "^11.9.0",
+    "marked": "^14.0.0",
+    "playwright-core": "^1.48.0"
+  }
+}

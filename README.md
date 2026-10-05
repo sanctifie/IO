@@ -2,6 +2,10 @@
 
 Suivi de notre progression sur le programme [ZaheerrAhmed/DevOps-Projects](https://github.com/ZaheerrAhmed/DevOps-Projects) (30 projets, du débutant à l'avancé).
 
+## 📘 La bible du parcours
+
+**[docs/Bible-DevOps-Cloud.pdf](docs/Bible-DevOps-Cloud.pdf)** — 205 pages : les fondamentaux (DevOps, cloud, Linux, réseau, AWS, Git, Docker, CI/CD, Jenkins, Ansible, Kubernetes, Terraform, Helm, GitOps, DevSecOps, observabilité) et les 30 projets expliqués pas à pas, mis à jour pour 2026. Sources Markdown dans `docs/bible-src/`.
+
 ## Organisation
 
 - Un dossier par projet : `projects/NN-nom-court/`
