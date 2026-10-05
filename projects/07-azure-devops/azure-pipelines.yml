@@ -1,0 +1,157 @@
+# Projet 07 — Terraform (validate → plan → apply) puis build de l'image et déploiement sur AKS.
+# Prérequis : service connections "azure-devops-journey-service-connection" (ARM, fédération d'identité)
+# et "acr-connection" (Docker Registry → ton ACR) ; extension Terraform (Microsoft DevLabs) ;
+# variable group "devopsjourney" lié au Key Vault (secret AIKEY) ; fichier vars/production.tfvars.
+trigger:
+  batch: true
+  branches:
+    include: [main]
+
+pr: none
+
+pool:
+  vmImage: ubuntu-latest   # ou "name: Default" pour un agent auto-hébergé
+
+variables:
+  - group: devopsjourney
+  - name: backendServiceArm
+    value: 'azure-devops-journey-service-connection'
+  - name: backendAzureRmResourceGroupName
+    value: 'devops-journey-rg'
+  - name: backendAzureRmStorageAccountName
+    value: 'REMPLACER-PAR-TON-STORAGE-ACCOUNT'
+  - name: backendAzureRmContainerName
+    value: 'tfstate'
+  - name: backendAzureRmKey
+    value: 'terraform.tfstate'
+  - name: environment
+    value: 'production'
+  - name: tfDir
+    value: '$(System.DefaultWorkingDirectory)/terraform'
+  - name: containerRegistry
+    value: 'acr-connection'
+  - name: repository
+    value: 'aspnet'
+  - name: aksResourceGroup
+    value: 'devopsjourney-rg'
+  - name: aksName
+    value: 'devopsjourneyaks'
+  - name: acrLoginServer
+    value: 'REMPLACER.azurecr.io'
+
+stages:
+  - stage: validate
+    jobs:
+      - job: validate
+        steps:
+          - task: TerraformInstaller@1
+            inputs: { terraformVersion: 'latest' }
+          - task: TerraformTaskV4@4
+            displayName: init
+            inputs:
+              provider: azurerm
+              command: init
+              workingDirectory: $(tfDir)
+              backendServiceArm: $(backendServiceArm)
+              backendAzureRmResourceGroupName: $(backendAzureRmResourceGroupName)
+              backendAzureRmStorageAccountName: $(backendAzureRmStorageAccountName)
+              backendAzureRmContainerName: $(backendAzureRmContainerName)
+              backendAzureRmKey: $(backendAzureRmKey)
+          - task: TerraformTaskV4@4
+            displayName: validate
+            inputs: { provider: azurerm, command: validate, workingDirectory: $(tfDir) }
+
+  - stage: plan
+    dependsOn: validate
+    jobs:
+      - job: plan
+        steps:
+          - task: TerraformInstaller@1
+            inputs: { terraformVersion: 'latest' }
+          - task: TerraformTaskV4@4
+            displayName: init
+            inputs:
+              provider: azurerm
+              command: init
+              workingDirectory: $(tfDir)
+              backendServiceArm: $(backendServiceArm)
+              backendAzureRmResourceGroupName: $(backendAzureRmResourceGroupName)
+              backendAzureRmStorageAccountName: $(backendAzureRmStorageAccountName)
+              backendAzureRmContainerName: $(backendAzureRmContainerName)
+              backendAzureRmKey: $(backendAzureRmKey)
+          - task: TerraformTaskV4@4
+            displayName: plan
+            inputs:
+              provider: azurerm
+              command: plan
+              commandOptions: '-input=false -var-file="../vars/$(environment).tfvars"'
+              environmentServiceNameAzureRM: $(backendServiceArm)
+              workingDirectory: $(tfDir)
+
+  - stage: apply
+    dependsOn: plan
+    jobs:
+      - deployment: apply
+        environment: infra-production     # ajoute une approbation sur cet environnement pour relire le plan
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - task: TerraformInstaller@1
+                  inputs: { terraformVersion: 'latest' }
+                - task: TerraformTaskV4@4
+                  displayName: init
+                  inputs:
+                    provider: azurerm
+                    command: init
+                    workingDirectory: $(tfDir)
+                    backendServiceArm: $(backendServiceArm)
+                    backendAzureRmResourceGroupName: $(backendAzureRmResourceGroupName)
+                    backendAzureRmStorageAccountName: $(backendAzureRmStorageAccountName)
+                    backendAzureRmContainerName: $(backendAzureRmContainerName)
+                    backendAzureRmKey: $(backendAzureRmKey)
+                - task: TerraformTaskV4@4
+                  displayName: apply
+                  inputs:
+                    provider: azurerm
+                    command: apply
+                    commandOptions: '-input=false -auto-approve -var-file="../vars/$(environment).tfvars"'
+                    environmentServiceNameAzureRM: $(backendServiceArm)
+                    workingDirectory: $(tfDir)
+
+  - stage: build
+    dependsOn: apply
+    jobs:
+      - job: build
+        steps:
+          - task: Docker@2
+            displayName: Build et push vers ACR
+            inputs:
+              command: buildAndPush
+              repository: $(repository)
+              dockerfile: '$(Build.SourcesDirectory)/app/Dockerfile'
+              buildContext: '$(Build.SourcesDirectory)/app'
+              containerRegistry: $(containerRegistry)
+              tags: $(Build.BuildId)
+
+  - stage: deploy
+    dependsOn: build
+    jobs:
+      - job: deploy
+        steps:
+          - task: AzureCLI@2
+            displayName: Déployer sur AKS
+            inputs:
+              azureSubscription: $(backendServiceArm)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -e
+                az aks get-credentials -g $(aksResourceGroup) -n $(aksName) --admin --overwrite-existing
+                kubectl create secret generic aikey --from-literal=aisecret="$AIKEY" --dry-run=client -o yaml | kubectl apply -f -
+                sed -e "s#ACR_LOGIN_SERVER#$(acrLoginServer)#" -e "s#IMAGE_TAG#$(Build.BuildId)#" k8s/aspnet.yaml | kubectl apply -f -
+                kubectl rollout status deployment/aspnetcore --timeout=180s
+                kubectl get svc aspnetcore
+            env:
+              AIKEY: $(AIKEY)    # secret du variable group (non exposé automatiquement aux scripts)

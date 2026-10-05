@@ -1,0 +1,8 @@
+# Projet 06 — valeurs du chart sample-app
+replicaCount: 1
+image:
+  repository: TON-NOM.jfrog.io/docker-local/sample_app
+  tag: "2.1.2"
+# Le secret "dockercred" (accès au registre JFrog) est créé à la main, hors Git :
+#   kubectl create secret docker-registry dockercred -n sample-app --docker-server=TON-NOM.jfrog.io \
+#     --docker-username=<user> --docker-password=<token>

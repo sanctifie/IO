@@ -1,0 +1,78 @@
+// Projet 06 — pipeline complet : build, tests, SonarCloud + Quality Gate, JFrog (jar + image), Helm sur EKS.
+// Prérequis Jenkins : agent label "maven" ; plugins SonarQube Scanner, Artifactory, Docker Pipeline ;
+// serveur Sonar "sonar-server", scanner "sonar-scanner", credential "jfrog-cred" (Username with password).
+def registry  = 'https://TON-NOM.jfrog.io'
+def imageName = 'TON-NOM.jfrog.io/docker-local/sample_app'
+def version   = '2.1.2'
+
+pipeline {
+    agent { node { label 'maven' } }
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 45, unit: 'MINUTES')
+    }
+    stages {
+        stage('Build') {
+            steps {
+                sh 'mvn -B clean deploy -Dmaven.test.skip=true'   // compile + "déploie" le jar dans jarstaging/
+            }
+        }
+        stage('Tests unitaires') {
+            steps {
+                sh 'mvn -B surefire-report:report'
+            }
+        }
+        stage('Analyse SonarCloud') {
+            environment { scannerHome = tool 'sonar-scanner' }
+            steps {
+                withSonarQubeEnv('sonar-server') {
+                    sh "${scannerHome}/bin/sonar-scanner"
+                }
+            }
+        }
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 10, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+        stage('Publication du jar') {
+            steps {
+                script {
+                    def server = Artifactory.newServer url: registry + '/artifactory', credentialsId: 'jfrog-cred'
+                    def uploadSpec = """{
+                      "files": [{
+                        "pattern": "jarstaging/(*)",
+                        "target": "maven-libs-release-local/{1}",
+                        "flat": "false",
+                        "props": "buildid=${env.BUILD_ID};commitid=${env.GIT_COMMIT}",
+                        "exclusions": ["*.sha1", "*.md5"]
+                      }]
+                    }"""
+                    def buildInfo = server.upload(uploadSpec)
+                    buildInfo.env.collect()
+                    server.publishBuildInfo(buildInfo)
+                }
+            }
+        }
+        stage('Build image Docker') {
+            steps {
+                script { app = docker.build("${imageName}:${version}") }
+            }
+        }
+        stage('Push image Docker') {
+            steps {
+                script {
+                    docker.withRegistry(registry, 'jfrog-cred') { app.push() }
+                }
+            }
+        }
+        stage('Déploiement Helm (partie B)') {
+            when { expression { return fileExists('sample-app/Chart.yaml') && env.DEPLOY_TO_EKS == 'true' } }
+            steps {
+                sh 'helm upgrade --install sample-app ./sample-app -n sample-app'
+            }
+        }
+    }
+}

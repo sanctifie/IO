@@ -1,0 +1,11 @@
+# Copier en hosts.ini et mettre les IP PRIVÉES (ou utiliser la sortie "terraform output -raw ansible_inventory")
+[jenkins_master]
+master ansible_host=10.6.1.X
+
+[jenkins_agent]
+agent ansible_host=10.6.1.Y
+
+[all:vars]
+ansible_user=ubuntu
+ansible_ssh_private_key_file=~/.ssh/io-key.pem
+ansible_ssh_common_args='-o StrictHostKeyChecking=accept-new'

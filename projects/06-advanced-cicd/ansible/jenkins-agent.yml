@@ -1,0 +1,54 @@
+---
+- name: Préparer l'agent Jenkins (serveur de build Maven + Docker + kubectl + Helm)
+  hosts: jenkins_agent
+  become: true
+  tasks:
+    - name: Paquets de build
+      ansible.builtin.apt:
+        name: [openjdk-21-jdk, maven, git, docker.io, unzip, curl]
+        update_cache: true
+
+    - name: Docker démarré
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: ubuntu peut utiliser docker (les builds Jenkins tourneront sous ubuntu)
+      ansible.builtin.user:
+        name: ubuntu
+        groups: docker
+        append: true
+
+    - name: Dossier de travail de l'agent
+      ansible.builtin.file:
+        path: /home/ubuntu/jenkins
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+
+    # ---- Partie B : outils Kubernetes ----
+    - name: kubectl (dernière version stable)
+      ansible.builtin.shell: |
+        set -e
+        curl -fsSLo /usr/local/bin/kubectl "https://dl.k8s.io/release/$(curl -Ls https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+        chmod 0755 /usr/local/bin/kubectl
+      args:
+        creates: /usr/local/bin/kubectl
+        executable: /bin/bash
+
+    - name: AWS CLI v2
+      ansible.builtin.shell: |
+        set -e
+        cd /tmp && curl -fsSLo awscliv2.zip https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+        unzip -qo awscliv2.zip && ./aws/install && rm -rf aws awscliv2.zip
+      args:
+        creates: /usr/local/bin/aws
+        executable: /bin/bash
+
+    - name: Helm
+      ansible.builtin.shell: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      args:
+        creates: /usr/local/bin/helm
+        executable: /bin/bash

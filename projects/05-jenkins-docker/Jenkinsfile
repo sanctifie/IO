@@ -1,0 +1,51 @@
+// Projet 05 — build Maven, copie sur l'hôte Docker, construction et lancement du conteneur.
+// Prérequis Jenkins : outils "jdk21" et "maven3", credential SSH "dockerhost-ssh" (user dockeradmin),
+// plugins GitHub Integration, SSH Agent, Pipeline: Stage View.
+pipeline {
+    agent any
+    tools {
+        jdk 'jdk21'
+        maven 'maven3'
+    }
+    environment {
+        DOCKER_HOST_IP = 'REMPLACER-PAR-IP-PRIVEE-DU-DOCKERHOST'
+        DEPLOY_DIR     = '/opt/docker'
+    }
+    triggers {
+        githubPush()          // webhook GitHub → http://<jenkins>:8080/github-webhook/
+    }
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+    stages {
+        stage('Build') {
+            steps {
+                sh 'mvn -B clean package'
+            }
+        }
+        stage('Copier vers l\'hôte Docker') {
+            steps {
+                sshagent(credentials: ['dockerhost-ssh']) {
+                    sh 'scp -o StrictHostKeyChecking=no webapp/target/*.war Dockerfile dockeradmin@$DOCKER_HOST_IP:$DEPLOY_DIR/'
+                }
+            }
+        }
+        stage('Construire et lancer le conteneur') {
+            steps {
+                sshagent(credentials: ['dockerhost-ssh']) {
+                    sh '''
+                      ssh -o StrictHostKeyChecking=no dockeradmin@$DOCKER_HOST_IP "
+                        cd $DEPLOY_DIR &&
+                        docker build -t regapp:$BUILD_NUMBER . &&
+                        (docker rm -f registerapp || true) &&
+                        docker run -d --name registerapp -p 8087:8080 regapp:$BUILD_NUMBER
+                      "
+                    '''
+                }
+            }
+        }
+    }
+    post {
+        success { echo "Application : http://<IP_PUBLIQUE_DOCKERHOST>:8087/webapp/" }
+    }
+}

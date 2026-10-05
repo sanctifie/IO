@@ -1,0 +1,26 @@
+{
+  "family": "django-task",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "runtimePlatform": { "operatingSystemFamily": "LINUX", "cpuArchitecture": "X86_64" },
+  "executionRoleArn": "arn:aws:iam::__ACCOUNT__:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "django",
+      "image": "__IMAGE__",
+      "essential": true,
+      "portMappings": [{ "containerPort": 8000, "protocol": "tcp" }],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/django-task",
+          "awslogs-region": "__REGION__",
+          "awslogs-stream-prefix": "django",
+          "awslogs-create-group": "true"
+        }
+      }
+    }
+  ]
+}

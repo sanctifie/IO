@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aspnetcore
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: aspnetcore }
+  template:
+    metadata:
+      labels: { app: aspnetcore }
+    spec:
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+        - name: aspnetcore
+          image: ACR_LOGIN_SERVER/aspnet:IMAGE_TAG   # remplacé par le pipeline
+          ports: [{ containerPort: 80 }]
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 250m, memory: 256Mi }
+          readinessProbe:
+            httpGet: { path: /, port: 80 }
+            initialDelaySeconds: 5
+          env:
+            - name: APPLICATIONINSIGHTS_CONNECTION_STRING
+              valueFrom: { secretKeyRef: { name: aikey, key: aisecret } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aspnetcore
+spec:
+  type: LoadBalancer
+  ports: [{ port: 80, targetPort: 80 }]
+  selector: { app: aspnetcore }

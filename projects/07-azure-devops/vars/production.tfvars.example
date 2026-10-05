@@ -1,0 +1,8 @@
+# Copier en ../vars/production.tfvars (nom attendu par le pipeline)
+name                      = "devopsjourney"
+location                  = "francecentral"
+acr_name                  = "devopsjourneyacr12345"
+keyvault_name             = "devopsjourney-kv-12345"
+aks_admin_group_object_id = "00000000-0000-0000-0000-000000000000"
+node_count                = 1
+node_vm_size              = "Standard_B2s"

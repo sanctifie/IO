@@ -1,0 +1,8 @@
+name: azure-devopsjourney
+title: Tests de l'infrastructure du projet 07
+version: 1.0.0
+supports:
+  - platform: azure
+depends:
+  - name: inspec-azure
+    url: https://github.com/inspec/inspec-azure/archive/main.tar.gz

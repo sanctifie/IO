@@ -1,0 +1,49 @@
+---
+- name: Installer le contrôleur Jenkins
+  hosts: jenkins_master
+  become: true
+  vars:
+    jenkins_key: jenkins.io-2023.key   # nom à vérifier sur https://pkg.jenkins.io/debian-stable/
+  tasks:
+    - name: Java 21
+      ansible.builtin.apt:
+        name: [fontconfig, openjdk-21-jre]
+        update_cache: true
+
+    - name: Dossier des clés APT
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: Clé du dépôt Jenkins
+      ansible.builtin.get_url:
+        url: "https://pkg.jenkins.io/debian-stable/{{ jenkins_key }}"
+        dest: /etc/apt/keyrings/jenkins-keyring.asc
+        mode: "0644"
+
+    - name: Dépôt Jenkins
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/etc/apt/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/"
+        filename: jenkins
+
+    - name: Installer Jenkins
+      ansible.builtin.apt:
+        name: jenkins
+        update_cache: true
+
+    - name: Démarrer Jenkins
+      ansible.builtin.systemd:
+        name: jenkins
+        state: started
+        enabled: true
+
+    - name: Lire le mot de passe initial
+      ansible.builtin.command: cat /var/lib/jenkins/secrets/initialAdminPassword
+      register: initial_password
+      changed_when: false
+      failed_when: false
+
+    - name: Afficher le mot de passe initial
+      ansible.builtin.debug:
+        msg: "Mot de passe initial Jenkins : {{ initial_password.stdout | default('déjà configuré') }}"

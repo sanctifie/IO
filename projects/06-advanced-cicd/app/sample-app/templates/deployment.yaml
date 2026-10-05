@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sample-app-dep
+  namespace: sample-app
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app:  sample-app
+  template:
+    metadata:
+      labels:
+        app:  sample-app
+    spec:
+      imagePullSecrets:
+      - name: dockercred
+      containers:
+      - name:  sample-app
+        image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000

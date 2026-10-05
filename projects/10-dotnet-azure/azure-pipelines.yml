@@ -1,0 +1,57 @@
+# Projet 10 — remplace « Azure DevOps Starter » (retiré) : build, tests, publication, déploiement sur App Service.
+trigger:
+  branches:
+    include: [main]
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  buildConfiguration: Release
+  azureSubscription: 'azure-devops-journey-service-connection'   # service connection du projet 07
+  webAppName: 'REMPLACER-PAR-LE-NOM-DE-LA-WEB-APP'               # affiché par infra.sh
+
+stages:
+  - stage: Build
+    jobs:
+      - job: Build
+        steps:
+          - task: UseDotNet@2
+            inputs: { packageType: sdk, version: '8.0.x' }
+          - script: dotnet restore
+            displayName: Restaurer
+          - script: dotnet build --configuration $(buildConfiguration) --no-restore
+            displayName: Compiler
+          - task: DotNetCoreCLI@2
+            displayName: Tests unitaires
+            inputs:
+              command: test
+              projects: '**/*Tests.csproj'
+              arguments: '--configuration $(buildConfiguration) --no-build --collect "XPlat Code Coverage"'
+              publishTestResults: true
+          - task: DotNetCoreCLI@2
+            displayName: Publier
+            inputs:
+              command: publish
+              publishWebProjects: true
+              arguments: '--configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)'
+              zipAfterPublish: true
+          - publish: $(Build.ArtifactStagingDirectory)
+            artifact: drop
+
+  - stage: Deploy
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: DeployWeb
+        environment: production    # Approvals and checks : ajoute-toi comme approbateur
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureWebApp@1
+                  inputs:
+                    azureSubscription: $(azureSubscription)
+                    appType: webAppLinux
+                    appName: $(webAppName)
+                    package: $(Pipeline.Workspace)/drop/**/*.zip

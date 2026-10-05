@@ -1,0 +1,106 @@
+# Projet 14 — CI/CD Android (version corrigée et modernisée du workflow d'origine)
+# Corrections : actions à jour, $GITHUB_OUTPUT au lieu de ::set-output, tests via testDebugUnitTest
+# (la tâche "jacocoTest" appelée à l'origine n'existe pas dans ce projet), analyse SonarCloud avec
+# l'action officielle (SonarCloud exige Java 17, que Gradle 7.0 ne supporte pas), OIDC vers AWS.
+name: Android CI/CD
+
+on:
+  push:
+    branches: [main, qa, develop]
+  pull_request:
+    branches: [main, qa]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write      # authentification OIDC vers AWS (job deploy)
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      build_date: ${{ steps.date.outputs.build_date }}
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: JDK 11 (exigé par Android Gradle Plugin 7.0 / Gradle 7.0.2) + cache Gradle
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '11'
+          cache: gradle
+
+      - run: chmod +x gradlew
+
+      - name: Lint
+        run: ./gradlew lint
+
+      - name: Build (APK debug et release)
+        run: ./gradlew build
+
+      - name: Tests unitaires
+        run: ./gradlew testDebugUnitTest
+
+      - name: Analyse SonarCloud
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
+        with:
+          args: >
+            -Dsonar.organization=${{ vars.SONAR_ORG }}
+            -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
+            -Dsonar.sources=app/src/main
+            -Dsonar.java.binaries=app/build/intermediates/javac,app/build/tmp/kotlin-classes
+
+      - name: Date du build
+        id: date
+        run: echo "build_date=$(date +'%Y%m%d-%H%M%S')" >> "$GITHUB_OUTPUT"
+
+      - name: Renommer les APK avec la date
+        run: |
+          mkdir -p apk-files/debug apk-files/release
+          cp app/build/outputs/apk/debug/app-debug.apk "apk-files/debug/app-debug-${{ steps.date.outputs.build_date }}.apk"
+          cp app/build/outputs/apk/release/app-release-unsigned.apk "apk-files/release/app-release-unsigned-${{ steps.date.outputs.build_date }}.apk"
+
+      - name: Publier les APK comme artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-files
+          path: apk-files/
+          retention-days: 7     # remplace l'ancien workflow "delete-artifacts"
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/qa' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name }}
+    env:
+      CHAT_WEBHOOK_URL: ${{ secrets.CHAT_WEBHOOK_URL }}   # niveau job : lisible dans les "if" des étapes
+    steps:
+      - name: Récupérer les APK
+        uses: actions/download-artifact@v4
+        with:
+          name: apk-files
+          path: apk-files/
+
+      - run: ls -R apk-files
+
+      - name: S'authentifier auprès d'AWS (OIDC, sans clé)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: eu-west-3
+
+      - name: Publier dans S3, dans le dossier de l'environnement
+        run: aws s3 cp apk-files/ "s3://${{ vars.APK_BUCKET }}/${{ github.ref_name }}/${{ needs.build.outputs.build_date }}/" --recursive
+
+      - name: Notification (optionnelle)
+        if: always() && env.CHAT_WEBHOOK_URL != ''
+        run: |
+          curl -s -X POST -H 'Content-Type: application/json' \
+            -d "{\"text\":\"Android ${{ github.ref_name }} : ${{ job.status }}\"}" "$CHAT_WEBHOOK_URL"
