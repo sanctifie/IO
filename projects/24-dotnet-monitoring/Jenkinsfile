@@ -1,0 +1,90 @@
+// Pipeline DotNet-monitoring (projet 24). À la racine de TON dépôt (l'URL /tree/... d'origine n'est pas clonable).
+// Credentials : Sonar-token, docker, nvd-api-key, k8s (Secret file). Tools : jdk17, sonar-scanner, DP-Check, docker.
+// Le serveur Jenkins a besoin de "make" (sudo apt install -y make).
+pipeline {
+    agent any
+    tools { jdk 'jdk17' }
+    environment {
+        SCANNER_HOME = tool 'sonar-scanner'
+        IMAGE_REPO   = 'ton-pseudo-dockerhub/dotnet-monitoring'   // TOUJOURS en minuscules
+    }
+    options {
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+    stages {
+        stage('Clean workspace') { steps { cleanWs() } }
+
+        stage('Checkout') {
+            steps { git branch: 'main', url: 'https://github.com/TON-PSEUDO/dotnet-monitoring.git' }
+        }
+
+        stage('Analyse SonarQube') {
+            steps {
+                withSonarQubeEnv('sonar-server') {
+                    sh '$SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=Dotnet-Webapp -Dsonar.projectKey=Dotnet-Webapp'
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: false, credentialsId: 'Sonar-token'
+                }
+            }
+        }
+
+        stage('Trivy FS') { steps { sh 'trivy fs . > trivy-fs_report.txt' } }
+
+        stage('OWASP Dependency-Check') {
+            steps {
+                withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_KEY')]) {
+                    dependencyCheck additionalArguments: '--scan ./ --format XML --nvdApiKey ' + env.NVD_KEY, odcInstallation: 'DP-Check'
+                }
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+
+        stage('Image Docker') {
+            steps { sh 'make image IMAGE_REPO=$IMAGE_REPO IMAGE_TAG=$BUILD_NUMBER' }
+        }
+
+        stage('Trivy image') {
+            steps { sh 'trivy image docker.io/$IMAGE_REPO:$BUILD_NUMBER > trivy.txt' }
+        }
+
+        stage('Push') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {
+                        sh 'make push IMAGE_REPO=$IMAGE_REPO IMAGE_TAG=$BUILD_NUMBER'
+                    }
+                }
+            }
+        }
+
+        stage('Déployer en conteneur') {
+            steps {
+                sh '''
+                  docker rm -f dotnet || true
+                  docker run -d --name dotnet --restart unless-stopped -p 5000:5000 docker.io/$IMAGE_REPO:$BUILD_NUMBER
+                '''
+            }
+        }
+
+        // Étape 4 : décommenter une fois le cluster prêt
+        // stage('Déployer sur Kubernetes') {
+        //     steps {
+        //         withKubeConfig(credentialsId: 'k8s') {
+        //             sh 'kubectl apply -f K8S/deployment.yaml'
+        //             sh 'kubectl set image deployment/dotnet-app-deployment dotnet-app=docker.io/$IMAGE_REPO:$BUILD_NUMBER'
+        //             sh 'kubectl rollout status deployment/dotnet-app-deployment --timeout=120s'
+        //         }
+        //     }
+        // }
+    }
+    post {
+        always { archiveArtifacts artifacts: 'trivy*.txt', allowEmptyArchive: true }
+    }
+}
