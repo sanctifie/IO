@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: petshop
+  labels:
+    app: petshop
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: petshop
+  template:
+    metadata:
+      labels:
+        app: petshop
+    spec:
+      containers:
+        - name: petshop
+          image: ton-pseudo-dockerhub/petstore:latest # remplacé à chaque build (kubectl set image)
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 250m
+              memory: 384Mi
+            limits:
+              memory: 768Mi
+          readinessProbe:
+            httpGet:
+              path: /jpetstore/
+              port: 8080
+            initialDelaySeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: petshop
+spec:
+  type: NodePort # LoadBalancer d'origine : resterait <pending> sur un cluster kubeadm
+  selector:
+    app: petshop
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: 8080
+      nodePort: 30080 # http://<IP_WORKER>:30080/jpetstore

@@ -19,3 +19,14 @@ chmod +x common/*.sh
 ```
 
 Lis toujours un script avant de l'exécuter.
+
+## `terraform-lab/` — serveurs EC2 des projets de la Partie 5
+
+VPC public, Security Group ouvert **uniquement depuis ton IP** (22 + ports choisis, NodePorts en option, trafic libre entre les machines du lab), instances Ubuntu 24.04 chiffrées en IMDSv2. Chaque projet fournit son `infra.tfvars` :
+
+```bash
+cd common/terraform-lab
+terraform init
+terraform apply   -var-file=../../projects/25-petshop-ansible/infra.tfvars -state=io-25.tfstate
+terraform destroy -var-file=../../projects/25-petshop-ansible/infra.tfvars -state=io-25.tfstate
+```

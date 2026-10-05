@@ -1,0 +1,6 @@
+.git
+target
+Ansible
+terraform
+Dockerfile*
+Jenkinsfile

@@ -1,0 +1,75 @@
+// Pipeline Petshop (projet 25) : Maven → Sonar → OWASP → Docker et Kubernetes via Ansible.
+// Credentials : Sonar-token, nvd-api-key, dockerhub (user/token), ssh (clé du master k8s).
+// Tools : jdk17, maven3, sonar-scanner, DP-Check, ansible (/usr/bin).
+pipeline {
+    agent any
+    tools {
+        jdk 'jdk17'
+        maven 'maven3'
+    }
+    environment {
+        SCANNER_HOME = tool 'sonar-scanner'
+    }
+    options {
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+    stages {
+        stage('Clean workspace') { steps { cleanWs() } }
+        stage('Checkout') {
+            steps { git branch: 'master', url: 'https://github.com/TON-PSEUDO/jpetstore-6.git' }
+        }
+        stage('Compilation') { steps { sh 'mvn -B clean compile' } }
+        stage('Tests')       { steps { sh 'mvn -B test' } }
+        stage('Analyse SonarQube') {
+            steps {
+                withSonarQubeEnv('sonar-server') {
+                    sh '$SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=Petstore -Dsonar.projectKey=Petstore -Dsonar.sources=src/main -Dsonar.java.binaries=target/classes'
+                }
+            }
+        }
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: false, credentialsId: 'Sonar-token'
+                }
+            }
+        }
+        stage('Build du war') { steps { sh 'mvn -B clean install -DskipTests=true' } }
+        stage('OWASP Dependency-Check') {
+            steps {
+                withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_KEY')]) {
+                    dependencyCheck additionalArguments: '--scan ./ --format XML --nvdApiKey ' + env.NVD_KEY, odcInstallation: 'DP-Check'
+                }
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+        stage('Docker via Ansible') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
+                    dir('Ansible') {
+                        ansiblePlaybook credentialsId: 'ssh', disableHostKeyChecking: true, installation: 'ansible',
+                            inventory: '/etc/ansible/hosts', playbook: 'docker.yaml',
+                            extraVars: [
+                                docker_user    : env.DH_USER,
+                                docker_password: [value: env.DH_PASS, hidden: true],
+                                workspace      : env.WORKSPACE,
+                                image_tag      : env.BUILD_NUMBER
+                            ]
+                    }
+                }
+            }
+        }
+        stage('Kubernetes via Ansible') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
+                    dir('Ansible') {
+                        ansiblePlaybook credentialsId: 'ssh', disableHostKeyChecking: true, installation: 'ansible',
+                            inventory: '/etc/ansible/hosts', playbook: 'kube.yaml',
+                            extraVars: [workspace: env.WORKSPACE, image: "${env.DH_USER}/petstore:${env.BUILD_NUMBER}"]
+                    }
+                }
+            }
+        }
+    }
+}
