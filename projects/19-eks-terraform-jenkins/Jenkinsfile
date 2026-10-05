@@ -1,0 +1,73 @@
+// Pipeline Terraform → EKS → déploiement Nginx (projet 19)
+// Aucune clé AWS ici : Jenkins utilise le rôle IAM de son instance EC2.
+pipeline {
+    agent any
+    parameters {
+        choice(name: 'action', choices: ['apply', 'destroy'], description: 'Créer ou détruire le cluster')
+    }
+    environment {
+        AWS_DEFAULT_REGION = 'eu-west-3'
+        CLUSTER_NAME       = 'my-eks-cluster'
+        TF_IN_AUTOMATION   = 'true'
+    }
+    options {
+        disableConcurrentBuilds()   // deux terraform apply en parallèle = verrou d'état
+        timestamps()
+    }
+    stages {
+        stage('Checkout') {
+            steps { git branch: 'main', url: 'https://github.com/TON-PSEUDO/terraform-eks-cicd.git' }
+        }
+        stage('Terraform init') {
+            steps { dir('tf-aws-eks') { sh 'terraform init -input=false' } }
+        }
+        stage('Terraform validate') {
+            steps { dir('tf-aws-eks') { sh 'terraform fmt -check -recursive && terraform validate' } }
+        }
+        stage('Pré-destroy : supprimer le load balancer') {
+            // Le LB créé par le Service Kubernetes bloquerait la suppression du VPC (DependencyViolation)
+            when { expression { params.action == 'destroy' } }
+            steps {
+                sh '''
+                  if aws eks describe-cluster --name "$CLUSTER_NAME" >/dev/null 2>&1; then
+                    aws eks update-kubeconfig --name "$CLUSTER_NAME"
+                    kubectl delete svc nginx -n eks-nginx-app --ignore-not-found --wait=true
+                    sleep 60   # laisse AWS supprimer le load balancer et ses interfaces réseau
+                  fi
+                '''
+            }
+        }
+        stage('Terraform plan') {
+            steps {
+                dir('tf-aws-eks') {
+                    script {
+                        def destroyFlag = params.action == 'destroy' ? '-destroy' : ''
+                        sh "terraform plan -input=false ${destroyFlag} -var-file=variables/dev.tfvars -out=tfplan"
+                    }
+                }
+                input(message: "Appliquer ce plan (${params.action}) ?", ok: 'Confirmer')
+            }
+        }
+        stage('Terraform apply/destroy') {
+            steps { dir('tf-aws-eks') { sh 'terraform apply -input=false tfplan' } }
+        }
+        stage('Déployer Nginx') {
+            when { expression { params.action == 'apply' } }   // pas de déploiement après un destroy
+            steps {
+                dir('manifest') {
+                    sh '''
+                      aws eks update-kubeconfig --name "$CLUSTER_NAME"
+                      kubectl create namespace eks-nginx-app --dry-run=client -o yaml | kubectl apply -f -
+                      kubectl apply -f deployment.yaml -n eks-nginx-app
+                      kubectl apply -f service.yaml -n eks-nginx-app
+                      kubectl rollout status deploy/nginx -n eks-nginx-app --timeout=180s
+                      kubectl get svc nginx -n eks-nginx-app
+                    '''
+                }
+            }
+        }
+    }
+    post {
+        always { dir('tf-aws-eks') { sh 'rm -f tfplan' } }
+    }
+}

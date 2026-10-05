@@ -2,3 +2,12 @@ node_modules/
 docs/bible-src/bible.html
 docs/bible-src/toc.json
 docs/bible-src/pages.json
+
+# Terraform
+.terraform/
+.terraform.lock.hcl.bak
+*.tfstate
+*.tfstate.*
+tfplan
+*.tfplan
+crash.log

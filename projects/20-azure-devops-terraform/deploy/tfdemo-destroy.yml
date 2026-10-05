@@ -1,0 +1,28 @@
+# Pipeline de nettoyage : détruit l'environnement choisi (lancer manuellement).
+name: Terraform - destroy Service Bus
+
+trigger: none
+
+parameters:
+  - name: environment
+    type: string
+    default: env01
+    values: [env01, env02]
+
+variables:
+  - group: Terraform_SPN
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - script: |
+      set -euo pipefail
+      curl -fsSLo tf.zip https://releases.hashicorp.com/terraform/1.16.5/terraform_1.16.5_linux_amd64.zip
+      sudo unzip -o tf.zip terraform -d /usr/local/bin && rm tf.zip
+      terraform init -input=false -backend-config="key=tfdemo.${{ parameters.environment }}.tfstate"
+      terraform destroy -input=false -auto-approve -var-file="tfdemo.${{ parameters.environment }}.tfvars"
+    displayName: Terraform destroy ${{ parameters.environment }}
+    workingDirectory: terraform/
+    env:
+      ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)

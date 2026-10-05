@@ -1,0 +1,14 @@
+name: Terraform - deploy Service Bus to env02
+
+trigger: none
+
+variables:
+  - group: Terraform_SPN # ARM_CLIENT_ID, ARM_TENANT_ID, ARM_SUBSCRIPTION_ID, ARM_CLIENT_SECRET (secret)
+
+stages:
+  - template: templates/terraform-template.yml
+    parameters:
+      rootFolder: terraform/
+      tfvarsFile: tfdemo.env02.tfvars
+      stateKey: tfdemo.env02.tfstate # une clé d'état PAR environnement
+      adoEnvironment: env02

@@ -1,0 +1,72 @@
+# Template réutilisable : la logique plan → approbation → apply, écrite UNE fois.
+parameters:
+  - name: rootFolder
+    type: string
+  - name: tfvarsFile
+    type: string
+  - name: stateKey
+    type: string
+  - name: adoEnvironment
+    type: string
+  - name: terraformVersion
+    type: string
+    default: '1.16.5'
+
+stages:
+  - stage: Terraform_Plan
+    displayName: Terraform Plan
+    jobs:
+      - job: Terraform_Plan
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - script: |
+              set -euo pipefail
+              curl -fsSLo tf.zip "https://releases.hashicorp.com/terraform/${{ parameters.terraformVersion }}/terraform_${{ parameters.terraformVersion }}_linux_amd64.zip"
+              sudo unzip -o tf.zip terraform -d /usr/local/bin && rm tf.zip
+              terraform -version
+            displayName: Installer Terraform (version épinglée)
+          - script: |
+              set -euo pipefail
+              terraform init -input=false -backend-config="key=${{ parameters.stateKey }}"
+              terraform fmt -check
+              terraform validate
+              terraform plan -input=false -var-file="${{ parameters.tfvarsFile }}" -out=tfplan
+            displayName: Terraform init + plan
+            workingDirectory: ${{ parameters.rootFolder }}
+            env:
+              ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET) # variable secrète : à passer explicitement
+          # On publie le plan relu : l'apply appliquera exactement ce fichier
+          - publish: ${{ parameters.rootFolder }}/tfplan
+            artifact: tfplan
+            displayName: Publier le plan
+
+  - stage: Terraform_Apply
+    displayName: Terraform Apply
+    dependsOn: Terraform_Plan
+    condition: succeeded()
+    jobs:
+      - deployment: Terraform_Apply
+        pool:
+          vmImage: ubuntu-latest
+        environment: ${{ parameters.adoEnvironment }} # approbation configurée sur l'environnement
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - download: current
+                  artifact: tfplan
+                - script: |
+                    set -euo pipefail
+                    curl -fsSLo tf.zip "https://releases.hashicorp.com/terraform/${{ parameters.terraformVersion }}/terraform_${{ parameters.terraformVersion }}_linux_amd64.zip"
+                    sudo unzip -o tf.zip terraform -d /usr/local/bin && rm tf.zip
+                  displayName: Installer Terraform (même version que le plan)
+                - script: |
+                    set -euo pipefail
+                    terraform init -input=false -backend-config="key=${{ parameters.stateKey }}"
+                    terraform apply -input=false "$(Pipeline.Workspace)/tfplan/tfplan"
+                  displayName: Terraform apply (plan approuvé)
+                  workingDirectory: ${{ parameters.rootFolder }}
+                  env:
+                    ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)

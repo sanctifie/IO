@@ -1,0 +1,31 @@
+# Variante SANS secret (Workload Identity Federation) : remplace les étapes "script" du template
+# par cette tâche. azureSubscription = nom de ta service connection fédérée (projet 07).
+parameters:
+  - name: rootFolder
+    type: string
+  - name: tfvarsFile
+    type: string
+  - name: stateKey
+    type: string
+  - name: serviceConnection
+    type: string
+
+steps:
+  - task: AzureCLI@2
+    displayName: Terraform init + plan (OIDC)
+    inputs:
+      azureSubscription: ${{ parameters.serviceConnection }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      addSpnToEnvironment: true # expose servicePrincipalId, tenantId et idToken au script
+      workingDirectory: ${{ parameters.rootFolder }}
+      inlineScript: |
+        set -euo pipefail
+        export ARM_CLIENT_ID="$servicePrincipalId"
+        export ARM_TENANT_ID="$tenantId"
+        ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+        export ARM_SUBSCRIPTION_ID
+        export ARM_USE_OIDC=true
+        export ARM_OIDC_TOKEN="$idToken"
+        terraform init -input=false -backend-config="key=${{ parameters.stateKey }}"
+        terraform plan -input=false -var-file="${{ parameters.tfvarsFile }}" -out=tfplan
